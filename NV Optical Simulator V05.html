@@ -1,0 +1,1332 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MagLab-IUMAT | NV Optical Simulator V04.1</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#101923;color:#e5f1f6;
+ font:14px system-ui,Arial,sans-serif
+}
+main{max-width:1450px;margin:auto;padding:20px}
+header{margin-bottom:18px}
+.brand{
+ font-size:34px;font-weight:800;
+ color:#7deba6;letter-spacing:.5px
+}
+.author{color:#c4d7e2;font-size:15px;margin:5px 0 15px}
+h1{font-size:24px;margin:12px 0 5px}
+h2{font-size:17px;margin:0 0 12px}
+p,.note{color:#a9c0cc;line-height:1.55}
+.subtitle{font-size:14px;margin:5px 0}
+.version{font-size:12px;color:#89a9bb}
+.layout{
+ display:grid;
+ grid-template-columns:minmax(0,1fr) 365px;
+ gap:16px;align-items:start
+}
+.panel{
+ background:#1b2a38;
+ border:1px solid #365064;
+ border-radius:12px;padding:15px
+}
+canvas{
+ display:block;width:100%;height:auto;
+ background:#0b1d25;border-radius:8px;
+ touch-action:none
+}
+.guide{
+ background:#152635;
+ border:1px solid #345063;
+ border-radius:10px;
+ padding:12px 16px;margin:15px 0 20px
+}
+.guide h2{color:#a4e9ba;margin-bottom:5px}
+.guide ol{margin:7px 0;padding-left:22px}
+.guide li{margin:5px 0;color:#c6d8e3}
+.control-island{
+ background:#122330;
+ border:1px solid #354e60;
+ border-radius:10px;
+ margin:10px 0;overflow:hidden
+}
+.control-island summary{
+ cursor:pointer;padding:13px 12px;
+ color:#a5efbe;font-weight:700;
+ font-size:14px;user-select:none
+}
+.control-island[open] summary{
+ border-bottom:1px solid #354e60
+}
+.island-body{padding:4px 13px 12px}
+.control{margin:13px 0}
+.control label{
+ display:flex;justify-content:space-between;
+ gap:9px;margin-bottom:5px;font-size:12px
+}
+.control label b{color:#9deab7;white-space:nowrap}
+.control input{
+ width:100%;accent-color:#46dd7a;cursor:pointer
+}
+.control select{
+ width:100%;padding:9px;background:#0e1d29;
+ color:#e5f1f6;border:1px solid #476174;
+ border-radius:6px
+}
+.metrics{
+ display:grid;
+ grid-template-columns:repeat(2,minmax(0,1fr));
+ gap:8px
+}
+.metric{
+ background:#10202b;border-radius:8px;
+ padding:11px
+}
+.metric b{
+ display:block;color:#85e9a9;
+ font-size:20px;font-variant-numeric:tabular-nums
+}
+.metric small{color:#b3c9d5;font-size:11px}
+.note{font-size:12px}
+button{
+ background:#2b6075;color:white;border:0;
+ border-radius:7px;padding:10px 13px;
+ cursor:pointer;margin:7px 5px 7px 0
+}
+button:hover{background:#39809a}
+.result-panel{margin-top:15px}
+.footer{
+ text-align:center;color:#839eae;
+ font-size:12px;margin:25px 0 5px
+}
+@media(max-width:900px){
+ .layout{grid-template-columns:1fr}
+}
+</style>
+</head>
+
+<body>
+<main>
+
+<header>
+ <div class="brand">MagLab-IUMAT</div>
+ <div class="author">Developed by Reza Tavakoli Dinani</div>
+ <hr style="border:0;border-top:1px solid #365064">
+ <h1>NV Diamond Optical Simulator</h1>
+ <p class="subtitle">
+ Interactive laser ray tracing, total internal reflection,
+ NV absorption, optical saturation, and photoluminescence detection
+ </p>
+ <div class="version">Version 04.1 | Interactive optical model</div>
+</header>
+
+<section class="guide">
+ <h2>How to use this simulator</h2>
+ <ol>
+  <li>Select the laser entrance surface and move the entrance point
+      using the position slider or yellow marker.</li>
+  <li>Adjust the horizontal incident direction by dragging the green
+      handle, and use the elevation control for vertical steering.</li>
+  <li>Change the laser power, beam diameter, NV concentration,
+      and diamond corner-cut angle.</li>
+  <li>Observe the green beam paths, orange absorption heatmap,
+      and predicted photodiode voltage.</li>
+  <li>Use the saturation controls to compare linear and
+      intensity-dependent NV absorption.</li>
+ </ol>
+ <p class="note">
+ Green represents pump-light propagation; orange represents
+ absorbed pump power; the yellow marker indicates the entrance point.
+ The numerical model is approximate and is intended for exploring
+ optical trends rather than providing a fully calibrated prediction.
+ </p>
+</section>
+
+<div class="layout">
+
+<section class="panel">
+ <h2>Optical ray-tracing visualization</h2>
+ <canvas id="view" width="850" height="680"></canvas>
+ <p class="note">
+ Top view of the diamond. The selected entrance surface is highlighted
+ in yellow. Drag the yellow point to change its position, or drag
+ the green handle to change the incident direction.
+ </p>
+
+ <h2 style="margin-top:16px">Vertical propagation</h2>
+ <canvas id="side" width="850" height="160"></canvas>
+
+ <div>
+  <button id="reset">Reset settings</button>
+  <button id="png">Save diagram PNG</button>
+  <button id="csv">Export angle sweep CSV</button>
+ </div>
+
+ <p class="note">
+ A few thick rays are displayed for clarity. Numerical calculations
+ use a weighted bundle of 81 rays. The side view shows the central
+ ray through the 500 µm thickness.
+ </p>
+
+ <section class="panel result-panel">
+  <h2>Simulation results</h2>
+  <div class="metrics">
+   <div class="metric"><small>Predicted PD voltage</small>
+    <b id="vout">—</b></div>
+   <div class="metric"><small>Measured PD voltage</small>
+    <b>1.60 V</b></div>
+   <div class="metric"><small>NV pump absorption</small>
+    <b id="fraction">—</b></div>
+   <div class="metric"><small>Absorbed green power</small>
+    <b id="absorbed">—</b></div>
+   <div class="metric"><small>Red power at PD</small>
+    <b id="red">—</b></div>
+   <div class="metric"><small>Mean ray path</small>
+    <b id="path">—</b></div>
+   <div class="metric"><small>Absorption coefficient</small>
+    <b id="alpha">—</b></div>
+   <div class="metric"><small>Peak laser intensity</small>
+    <b id="intensity">—</b></div>
+   <div class="metric"><small>Total NV centers</small>
+    <b id="nvcount">—</b></div>
+   <div class="metric"><small>Beam entrance capture</small>
+    <b id="capture">—</b></div>
+   <div class="metric"><small>Escaped green power</small>
+    <b id="escaped">—</b></div>
+   <div class="metric"><small>Remaining green power</small>
+    <b id="remaining">—</b></div>
+  </div>
+  <p class="note" id="info"></p>
+ </section>
+</section>
+
+<aside class="panel">
+ <h2>Simulation control panel</h2>
+ <p class="note">
+ Expand a parameter group to modify its settings.
+ All results update automatically.
+ </p>
+
+ <details class="control-island" open>
+  <summary>1. Diamond geometry &amp; NV centers</summary>
+  <div class="island-body" id="group-diamond"></div>
+ </details>
+
+ <details class="control-island" open>
+  <summary>2. Laser entrance &amp; direction</summary>
+  <div class="island-body" id="group-geometry"></div>
+ </details>
+
+ <details class="control-island" open>
+  <summary>3. Laser excitation</summary>
+  <div class="island-body" id="group-laser"></div>
+ </details>
+
+ <details class="control-island">
+  <summary>4. PL collection &amp; photodiode</summary>
+  <div class="island-body" id="group-detection"></div>
+ </details>
+
+ <details class="control-island">
+  <summary>5. NV optical saturation</summary>
+  <div class="island-body" id="group-saturation"></div>
+ </details>
+
+ <details class="control-island">
+  <summary>6. Visualization settings</summary>
+  <div class="island-body" id="group-display"></div>
+ </details>
+
+ <p class="note">
+ Default sample: 1.45 × 1.45 × 0.50 mm³ diamond,
+ 250 µm corner facet, 300 ppb NV concentration,
+ 32 mW green laser, FGL630 filter, and PDAPC2 detector.
+ </p>
+</aside>
+</div>
+
+<div class="footer">
+ MagLab-IUMAT | Developed by Reza Tavakoli Dinani
+</div>
+</main>
+
+<script>
+'use strict';
+
+/* ========================================
+   CONSTANTS
+======================================== */
+
+const $=id=>document.getElementById(id);
+
+const canvas=$('view');
+const ctx=canvas.getContext('2d');
+
+const side=$('side');
+const sc=side.getContext('2d');
+
+const MM=1.45;
+const THICKNESS=0.50;
+const FACET=0.25;
+const RAD=Math.PI/180;
+
+const N_DIAMOND=2.41;
+const NV_SIGMA=3.1e-17;
+const CARBON_DENSITY=1.76e23;
+
+const PD_GAIN=1500;
+const PD_RESP=0.4;
+
+const MAX_BOUNCES=100;
+const EPS=1e-8;
+
+/* ========================================
+   DEFAULT PARAMETERS
+======================================== */
+
+const defaults={
+ entrance:'corner',
+ position:50,
+ power:32,
+ concentration:300,
+ cutAngle:45,
+ azimuth:0,
+ elevation:0,
+ beam:100,
+ spread:3,
+ shown:3,
+ reflections:7,
+ coupling:90,
+ photonYield:70,
+ collection:28,
+ filter:85,
+ Isat:100,
+ saturation:1,
+ heatmap:1,
+ fading:1
+};
+
+const S={...defaults};
+
+/* ========================================
+   GROUPED CONTROL DEFINITIONS
+======================================== */
+
+const groups={
+ diamond:[
+  ['concentration','NV concentration',' ppb',0,4500,25],
+  ['cutAngle','Corner-cut angle','°',15,75,1]
+ ],
+ geometry:[
+  ['position','Entrance position','%',0,100,1],
+  ['azimuth','Horizontal beam steering','°',-35,35,1],
+  ['elevation','Vertical beam steering','°',-35,35,1]
+ ],
+ laser:[
+  ['power','532 nm laser power',' mW',0,200,1],
+  ['beam','Beam diameter (1/e²)',' µm',20,240,5],
+  ['spread','Angular half-spread','°',0,15,.5],
+  ['coupling','Pump coupling into diamond','%',10,100,5]
+ ],
+ detection:[
+  ['photonYield','Effective red photon yield','%',20,100,5],
+  ['collection','CPC red collection','%',5,70,1],
+  ['filter','FGL630 red transmission','%',50,100,1]
+ ],
+ saturation:[
+  ['saturation','Enable saturation (0/1)','',0,1,1],
+  ['Isat','Effective saturation intensity',' kW/cm²',1,1000,1]
+ ],
+ display:[
+  ['shown','Visible beam paths','',1,5,1],
+  ['reflections','Displayed reflections','',1,15,1],
+  ['heatmap','Show absorption heatmap (0/1)','',0,1,1],
+  ['fading','Fade beam with absorption (0/1)','',0,1,1]
+ ]
+};
+
+const specs=Object.values(groups).flat();
+
+/* ========================================
+   CREATE CONTROL GROUPS
+======================================== */
+
+const entranceBox=document.createElement('div');
+entranceBox.className='control';
+
+entranceBox.innerHTML=`
+ <label><span>Laser entrance surface</span></label>
+ <select id="entranceSurface">
+  <option value="corner">Clipped corner</option>
+  <option value="left">Left edge</option>
+  <option value="right">Right edge</option>
+  <option value="top">Top edge</option>
+  <option value="bottom">Bottom edge</option>
+ </select>
+`;
+
+$('group-geometry').append(entranceBox);
+
+for(const [groupName,items] of Object.entries(groups)){
+ const parent=$('group-'+groupName);
+
+ for(const [key,label,unit,min,max,step] of items){
+  const div=document.createElement('div');
+  div.className='control';
+
+  div.innerHTML=`
+   <label>
+    <span>${label}</span>
+    <b id="val_${key}"></b>
+   </label>
+   <input type="range"
+    id="ctl_${key}"
+    min="${min}" max="${max}"
+    step="${step}" value="${S[key]}">
+  `;
+
+  parent.append(div);
+
+  $('ctl_'+key).addEventListener('input',e=>{
+   S[key]=Number(e.target.value);
+   draw();
+  });
+ }
+}
+
+$('entranceSurface').addEventListener('change',e=>{
+ S.entrance=e.target.value;
+ draw();
+});
+
+/* ========================================
+   VECTOR FUNCTIONS
+======================================== */
+
+function add(a,b,t=1){
+ return a.map((v,i)=>v+b[i]*t);
+}
+
+function sub(a,b){
+ return a.map((v,i)=>v-b[i]);
+}
+
+function dot(a,b){
+ return a.reduce((s,v,i)=>s+v*b[i],0);
+}
+
+function norm(a){
+ const m=Math.hypot(...a);
+ return a.map(v=>v/m);
+}
+
+function cross2(a,b){
+ return a[0]*b[1]-a[1]*b[0];
+}
+
+function clamp(v,min,max){
+ return Math.max(min,Math.min(max,v));
+}
+
+/* ========================================
+   DIAMOND GEOMETRY
+======================================== */
+
+function geometry(){
+ const a=FACET*Math.cos(S.cutAngle*RAD);
+ const b=FACET*Math.sin(S.cutAngle*RAD);
+
+ const poly=[
+  [a,0],
+  [MM,0],
+  [MM,MM],
+  [0,MM],
+  [0,b]
+ ];
+
+ const indices={
+  bottom:0,
+  right:1,
+  top:2,
+  left:3,
+  corner:4
+ };
+
+ const index=indices[S.entrance];
+
+ const p0=poly[index];
+ const p1=poly[(index+1)%poly.length];
+
+ const edge=sub(p1,p0);
+ const length=Math.hypot(...edge);
+ const tangent=norm(edge);
+
+ // Polygon is counterclockwise.
+ const inward=[-tangent[1],tangent[0]];
+
+ const fraction=S.position/100;
+ const point=add(p0,edge,fraction);
+
+ return {
+  poly,a,b,index,p0,p1,
+  length,tangent,inward,point
+ };
+}
+
+/* ========================================
+   ABSORPTION AND INTENSITY
+======================================== */
+
+function alpha0(){
+ // Absorption coefficient in mm^-1.
+ return CARBON_DENSITY*
+  S.concentration*1e-9*
+  NV_SIGMA/10;
+}
+
+function peakIntensity(powerMw,diameterMm){
+ const radiusCm=Math.max(diameterMm/2,1e-6)/10;
+ const powerW=powerMw/1000;
+
+ // kW/cm^2
+ return 2*powerW/
+  (Math.PI*radiusCm*radiusCm)/1000;
+}
+
+/* ========================================
+   FRESNEL REFLECTION
+======================================== */
+
+function fresnel(cosi,n1,n2){
+ cosi=clamp(Math.abs(cosi),0,1);
+
+ const sini2=Math.max(0,1-cosi*cosi);
+ const sint2=(n1/n2)**2*sini2;
+
+ if(sint2>=1)return 1;
+
+ const cost=Math.sqrt(1-sint2);
+
+ const rs=(
+  (n1*cosi-n2*cost)/
+  (n1*cosi+n2*cost)
+ )**2;
+
+ const rp=(
+  (n1*cost-n2*cosi)/
+  (n1*cost+n2*cosi)
+ )**2;
+
+ return clamp((rs+rp)/2,0,1);
+}
+
+/* ========================================
+   3D RAY TRACING
+======================================== */
+
+function ray(
+ offset,
+ azimuth,
+ elevation,
+ maxBounces,
+ record=true
+){
+ const g=geometry();
+
+ const origin=add(g.point,g.tangent,offset);
+
+ const er=elevation*RAD;
+ const ar=azimuth*RAD;
+
+ const horizontal=norm(
+  add(g.inward,g.tangent,Math.tan(ar))
+ );
+
+ let d=[
+  horizontal[0]*Math.cos(er),
+  horizontal[1]*Math.cos(er),
+  Math.sin(er)
+ ];
+
+ let p=[
+  origin[0]+d[0]*EPS,
+  origin[1]+d[1]*EPS,
+  THICKNESS/2+d[2]*EPS
+ ];
+
+ let remaining=1;
+ let absorbed=0;
+ let escaped=0;
+ let total=0;
+
+ const segments=[];
+ const alpha=alpha0();
+ const pump=S.power*S.coupling/100;
+
+ for(let bounce=0;bounce<maxBounces;bounce++){
+  if(remaining<1e-7)break;
+
+  let best=Infinity;
+  let hit=-1;
+  let normal=null;
+
+  for(let i=0;i<g.poly.length;i++){
+   const v=g.poly[i];
+   const w=g.poly[(i+1)%g.poly.length];
+
+   const edge=sub(w,v);
+
+   const den=cross2(
+    [d[0],d[1]],edge
+   );
+
+   if(Math.abs(den)<1e-12)continue;
+
+   const ap=[
+    v[0]-p[0],
+    v[1]-p[1]
+   ];
+
+   const u=cross2(ap,edge)/den;
+   const t=cross2(ap,[d[0],d[1]])/den;
+
+   if(
+    u>EPS&&u<best&&
+    t>=-1e-8&&t<=1+1e-8
+   ){
+    best=u;
+    hit=i;
+
+    normal=norm([
+     edge[1],-edge[0],0
+    ]);
+   }
+  }
+
+  if(Math.abs(d[2])>1e-12){
+   for(const z of [0,THICKNESS]){
+    const u=(z-p[2])/d[2];
+
+    if(u>EPS&&u<best){
+     best=u;
+     hit=z===0?5:6;
+
+     normal=z===0?
+      [0,0,-1]:[0,0,1];
+    }
+   }
+  }
+
+  if(hit<0||!Number.isFinite(best))break;
+
+  const end=add(p,d,best);
+  const before=remaining;
+
+  const localPower=pump*remaining;
+
+  const localI=peakIntensity(
+   localPower,S.beam/1000
+  );
+
+  const effectiveAlpha=
+   S.saturation?
+   alpha/(1+localI/S.Isat):
+   alpha;
+
+  const take=remaining*
+   (1-Math.exp(-effectiveAlpha*best));
+
+  absorbed+=take;
+  remaining-=take;
+  total+=best;
+
+  const afterAbsorption=remaining;
+
+  // Simplified optical boundary model.
+  // Corner and upper face are bonded.
+  let nextIndex=1;
+
+  if(hit===4)nextIndex=1.50;
+  if(hit===6)nextIndex=1.50;
+
+  const cosi=Math.abs(dot(d,normal));
+
+  const R=fresnel(
+   cosi,N_DIAMOND,nextIndex
+  );
+
+  const escapedHere=remaining*(1-R);
+
+  escaped+=escapedHere;
+  remaining*=R;
+
+  if(record){
+   segments.push({
+    p:[...p],
+    q:[...end],
+    before,
+    afterAbsorption,
+    after:remaining,
+    take,
+    escaped:escapedHere,
+    length:best,
+    hit
+   });
+  }
+
+  d=add(
+   d,normal,
+   -2*dot(d,normal)
+  );
+
+  p=add(end,d,EPS);
+ }
+
+ return {
+  segments,absorbed,
+  escaped,remaining,total
+ };
+}
+
+/* ========================================
+   WEIGHTED RAY BUNDLE
+======================================== */
+
+function evaluate(
+ azimuth=S.azimuth,
+ withPaths=true
+){
+ const g=geometry();
+ const samples=81;
+
+ let absorbed=0;
+ let escaped=0;
+ let remaining=0;
+ let totalPath=0;
+
+ let weightSum=0;
+ let capturedWeight=0;
+
+ const rayset=[];
+
+ const positionAlong=
+  g.length*S.position/100;
+
+ for(let i=0;i<samples;i++){
+  const u=2*(i+.5)/samples-1;
+
+  const offset=u*S.beam/2000;
+  const weight=Math.exp(-2*u*u);
+
+  weightSum+=weight;
+
+  const localPosition=positionAlong+offset;
+
+  if(
+   localPosition<0||
+   localPosition>g.length
+  )continue;
+
+  capturedWeight+=weight;
+
+  const tr=ray(
+   offset,
+   azimuth+u*S.spread*.65,
+   S.elevation,
+   MAX_BOUNCES,
+   withPaths
+  );
+
+  absorbed+=weight*tr.absorbed;
+  escaped+=weight*tr.escaped;
+  remaining+=weight*tr.remaining;
+  totalPath+=weight*tr.total;
+
+  if(withPaths&&i%4===0){
+   rayset.push({tr,weight});
+  }
+ }
+
+ return {
+  fraction:absorbed/weightSum,
+  escaped:escaped/weightSum,
+  remaining:remaining/weightSum,
+  capture:capturedWeight/weightSum,
+  mean:capturedWeight?
+   totalPath/capturedWeight:0,
+  rayset
+ };
+}
+
+/* ========================================
+   DRAWING UTILITIES
+======================================== */
+
+function xy(p){
+ const scale=410/MM;
+
+ return [
+  180+p[0]*scale,
+  80+p[1]*scale
+ ];
+}
+
+function line(p,q){
+ const a=xy(p);
+ const b=xy(q);
+
+ ctx.beginPath();
+ ctx.moveTo(...a);
+ ctx.lineTo(...b);
+}
+
+function drawBeam(tr,width,opacity){
+ for(const s of tr.segments){
+  const power=S.fading?
+   (s.before+s.afterAbsorption)/2:1;
+
+  if(power<.001)continue;
+
+  ctx.save();
+
+  ctx.globalAlpha=clamp(
+   opacity*Math.sqrt(power),.002,1
+  );
+
+  ctx.lineCap='round';
+  ctx.shadowColor='#28ff65';
+  ctx.shadowBlur=12;
+
+  ctx.strokeStyle='#20ef55';
+  ctx.lineWidth=width+10;
+
+  line(s.p,s.q);
+  ctx.stroke();
+
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='#43fc70';
+  ctx.lineWidth=width;
+
+  line(s.p,s.q);
+  ctx.stroke();
+
+  ctx.restore();
+ }
+}
+
+function drawHeat(tr,weight){
+ if(!S.heatmap)return;
+
+ for(const s of tr.segments){
+  if(s.take<=0)continue;
+
+  const steps=Math.max(
+   1,Math.ceil(s.length/.025)
+  );
+
+  for(let j=0;j<steps;j++){
+   const f=(j+.5)/steps;
+
+   const p=add(
+    s.p,sub(s.q,s.p),f
+   );
+
+   const c=xy(p);
+
+   const strength=clamp(
+    s.take/steps*weight*80,0,.7
+   );
+
+   ctx.beginPath();
+
+   ctx.fillStyle=
+    `rgba(255,143,37,${strength})`;
+
+   ctx.arc(
+    c[0],c[1],
+    Math.max(
+     5,S.beam/1000*410/MM*.6
+    ),
+    0,Math.PI*2
+   );
+
+   ctx.fill();
+  }
+ }
+}
+
+/* ========================================
+   MAIN DRAW
+======================================== */
+
+function draw(){
+ for(const [key,,unit] of specs){
+  $('val_'+key).textContent=S[key]+unit;
+ }
+
+ $('entranceSurface').value=S.entrance;
+
+ const g=geometry();
+
+ ctx.clearRect(0,0,850,680);
+ ctx.fillStyle='#0b1d25';
+ ctx.fillRect(0,0,850,680);
+
+ ctx.beginPath();
+
+ g.poly.forEach((p,i)=>{
+  const v=xy(p);
+
+  if(i===0)ctx.moveTo(...v);
+  else ctx.lineTo(...v);
+ });
+
+ ctx.closePath();
+ ctx.fillStyle='#153d48';
+ ctx.fill();
+
+ ctx.strokeStyle='#8ac6ce';
+ ctx.lineWidth=2;
+ ctx.stroke();
+
+ // Highlight entrance surface.
+ const p0=xy(g.p0);
+ const p1=xy(g.p1);
+
+ ctx.beginPath();
+ ctx.moveTo(...p0);
+ ctx.lineTo(...p1);
+
+ ctx.strokeStyle='#f7c948';
+ ctx.lineWidth=5;
+ ctx.stroke();
+
+ const result=evaluate();
+
+ for(const v of result.rayset){
+  drawHeat(v.tr,v.weight);
+ }
+
+ // Show only a few thick rays.
+ const count=S.shown;
+
+ const distanceToStart=
+  g.length*S.position/100;
+
+ const distanceToEnd=
+  g.length*(1-S.position/100);
+
+ for(let i=0;i<count;i++){
+  const u=count===1?
+   0:2*i/(count-1)-1;
+
+  const maxOffset=Math.min(
+   distanceToStart,distanceToEnd
+  );
+
+  const offset=u*Math.min(
+   S.beam/2000,maxOffset*.98
+  );
+
+  const tr=ray(
+   offset,
+   S.azimuth+u*S.spread*.55,
+   S.elevation,
+   S.reflections+1,
+   true
+  );
+
+  drawBeam(
+   tr,
+   Math.max(
+    3,S.beam/1000*410/MM*.38
+   ),
+   count===1?.95:.62
+  );
+ }
+
+ // Yellow entrance marker.
+ const point=xy(g.point);
+
+ ctx.beginPath();
+ ctx.arc(...point,7,0,Math.PI*2);
+ ctx.fillStyle='#ffd65a';
+ ctx.fill();
+
+ // Green incident-direction handle.
+ const direction=norm(
+  add(
+   g.inward,g.tangent,
+   Math.tan(S.azimuth*RAD)
+  )
+ );
+
+ const handle=xy(
+  add(g.point,direction,-.30)
+ );
+
+ ctx.beginPath();
+ ctx.moveTo(...point);
+ ctx.lineTo(...handle);
+
+ ctx.strokeStyle='#a3ffae';
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ ctx.beginPath();
+ ctx.arc(...handle,9,0,Math.PI*2);
+ ctx.fillStyle='#c2ffd0';
+ ctx.fill();
+
+ ctx.fillStyle='#e0eff3';
+ ctx.font='15px system-ui';
+
+ ctx.fillText(
+  'Drag direction',
+  Math.max(8,handle[0]-70),
+  Math.max(18,handle[1]-16)
+ );
+
+ ctx.fillText(
+  `Entrance: ${S.entrance}`,20,28
+ );
+
+ ctx.fillText(
+  `Corner cut: ${S.cutAngle}° / 250 µm`,
+  20,52
+ );
+
+ ctx.fillText(
+  'Diamond 1.45 × 1.45 mm',
+  350,645
+ );
+
+ drawSide();
+
+ /* ======================================
+    PHOTODIODE SIGNAL
+ ====================================== */
+
+ const pump=S.power*S.coupling/100;
+
+ const absPower=pump*result.fraction;
+
+ const redPower=
+  absPower*
+  (532/700)*
+  (S.photonYield/100)*
+  (S.collection/100)*
+  (S.filter/100);
+
+ const voltage=
+  redPower/1000*
+  PD_RESP*PD_GAIN;
+
+ $('vout').textContent=
+  voltage.toFixed(3)+' V';
+
+ $('fraction').textContent=
+  (result.fraction*100).toFixed(1)+'%';
+
+ $('absorbed').textContent=
+  absPower.toFixed(2)+' mW';
+
+ $('red').textContent=
+  (redPower*1000).toFixed(0)+' µW';
+
+ $('path').textContent=
+  result.mean.toFixed(2)+' mm';
+
+ $('alpha').textContent=
+  (alpha0()*10).toFixed(2)+' cm⁻¹';
+
+ $('intensity').textContent=
+  peakIntensity(
+   pump,S.beam/1000
+  ).toFixed(2)+' kW/cm²';
+
+ $('capture').textContent=
+  (result.capture*100).toFixed(1)+'%';
+
+ $('escaped').textContent=
+  (pump*result.escaped).toFixed(2)+' mW';
+
+ $('remaining').textContent=
+  (pump*result.remaining).toFixed(2)+' mW';
+
+ const volume=
+  (MM*MM-g.a*g.b/2)*
+  THICKNESS/1000;
+
+ const nvCount=
+  CARBON_DENSITY*
+  S.concentration*1e-9*
+  volume;
+
+ $('nvcount').textContent=
+  nvCount.toExponential(2);
+
+ $('info').textContent=
+  `Model − measured: ${(voltage-1.6).toFixed(3)} V. `+
+  `Entrance: ${S.entrance}, position ${S.position}%. `+
+  `Incident angles are specified inside the diamond. `+
+  `Optical efficiencies and saturation intensity `+
+  `are adjustable model parameters.`;
+}
+
+/* ========================================
+   SIDE VIEW
+======================================== */
+
+function drawSide(){
+ sc.clearRect(0,0,850,160);
+
+ sc.fillStyle='#0b1d25';
+ sc.fillRect(0,0,850,160);
+
+ sc.fillStyle='#153d48';
+ sc.fillRect(65,16,720,115);
+
+ sc.strokeStyle='#8ac6ce';
+ sc.strokeRect(65,16,720,115);
+
+ sc.fillStyle='#e0eff3';
+ sc.font='13px system-ui';
+
+ sc.fillText(
+  '500 µm thickness · central ray (unwrapped path)',
+  70,150
+ );
+
+ const tr=ray(
+  0,S.azimuth,S.elevation,
+  S.reflections+1,true
+ );
+
+ let dist=0;
+
+ for(const s of tr.segments){
+  const x1=65+Math.min(720,dist*85);
+  const x2=65+Math.min(
+   720,(dist+s.length)*85
+  );
+
+  sc.beginPath();
+
+  sc.moveTo(
+   x1,131-s.p[2]*230
+  );
+
+  sc.lineTo(
+   x2,131-s.q[2]*230
+  );
+
+  const brightness=S.fading?
+   clamp(
+    (s.before+s.afterAbsorption)/2,
+    .03,1
+   ):.9;
+
+  sc.strokeStyle=
+   `rgba(62,248,105,${brightness})`;
+
+  sc.lineWidth=5;
+  sc.stroke();
+
+  dist+=s.length;
+ }
+}
+
+/* ========================================
+   MOUSE INTERACTION
+======================================== */
+
+let dragMode=null;
+
+canvas.addEventListener('pointerdown',e=>{
+ const rect=canvas.getBoundingClientRect();
+
+ const x=(e.clientX-rect.left)*
+  canvas.width/rect.width;
+
+ const y=(e.clientY-rect.top)*
+  canvas.height/rect.height;
+
+ const g=geometry();
+ const p=xy(g.point);
+
+ const distance=Math.hypot(
+  x-p[0],y-p[1]
+ );
+
+ dragMode=distance<18?
+  'position':'direction';
+
+ canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointerup',()=>{
+ dragMode=null;
+});
+
+canvas.addEventListener('pointercancel',()=>{
+ dragMode=null;
+});
+
+canvas.addEventListener('pointermove',e=>{
+ if(!dragMode)return;
+
+ const rect=canvas.getBoundingClientRect();
+
+ const x=(e.clientX-rect.left)*
+  canvas.width/rect.width;
+
+ const y=(e.clientY-rect.top)*
+  canvas.height/rect.height;
+
+ const g=geometry();
+
+ if(dragMode==='position'){
+  const scale=410/MM;
+
+  const point=[
+   (x-180)/scale,
+   (y-80)/scale
+  ];
+
+  const relative=sub(point,g.p0);
+  const distance=dot(relative,g.tangent);
+
+  S.position=clamp(
+   Math.round(
+    100*distance/g.length
+   ),
+   0,100
+  );
+
+  $('ctl_position').value=S.position;
+
+ }else{
+  const p=xy(g.point);
+
+  const direction=[
+   p[0]-x,
+   p[1]-y
+  ];
+
+  const world=norm(direction);
+
+  const forward=dot(world,g.inward);
+  const sideways=dot(world,g.tangent);
+
+  const angle=Math.atan2(
+   sideways,forward
+  )/RAD;
+
+  S.azimuth=clamp(
+   Math.round(angle),-35,35
+  );
+
+  $('ctl_azimuth').value=S.azimuth;
+ }
+
+ draw();
+});
+
+/* ========================================
+   RESET
+======================================== */
+
+$('reset').onclick=()=>{
+ Object.assign(S,defaults);
+
+ for(const [key] of specs){
+  $('ctl_'+key).value=S[key];
+ }
+
+ $('entranceSurface').value=S.entrance;
+
+ draw();
+};
+
+/* ========================================
+   SAVE IMAGE
+======================================== */
+
+$('png').onclick=()=>{
+ const a=document.createElement('a');
+
+ a.href=canvas.toDataURL('image/png');
+ a.download='NV_GUI_V04_1.png';
+
+ a.click();
+};
+
+/* ========================================
+   EXPORT CSV
+======================================== */
+
+$('csv').onclick=()=>{
+ const rows=[
+  'azimuth_deg,entrance,position_pct,'+
+  'cut_deg,elevation_deg,nv_ppb,power_mW,'+
+  'absorbed_fraction,escaped_fraction,'+
+  'mean_path_mm,predicted_PD_V'
+ ];
+
+ for(let angle=-35;angle<=35;angle++){
+  const e=evaluate(angle,false);
+
+  const pump=S.power*S.coupling/100;
+
+  const red=
+   pump*e.fraction*
+   532/700*
+   S.photonYield/100*
+   S.collection/100*
+   S.filter/100;
+
+  const voltage=
+   red/1000*PD_RESP*PD_GAIN;
+
+  rows.push([
+   angle,S.entrance,S.position,
+   S.cutAngle,S.elevation,
+   S.concentration,S.power,
+   e.fraction.toFixed(6),
+   e.escaped.toFixed(6),
+   e.mean.toFixed(4),
+   voltage.toFixed(5)
+  ].join(','));
+ }
+
+ const blob=new Blob(
+  [rows.join('\n')],
+  {type:'text/csv'}
+ );
+
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement('a');
+
+ a.href=url;
+ a.download='NV_GUI_V04_1_sweep.csv';
+ a.click();
+
+ setTimeout(()=>{
+  URL.revokeObjectURL(url);
+ },1000);
+};
+
+/* ========================================
+   INITIALIZE
+======================================== */
+
+draw();
+
+</script>
+</body>
+</html>
