@@ -1,0 +1,1354 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NV Optical Simulator V04</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#101923;color:#e5f1f6;
+ font:14px system-ui,Arial
+}
+main{max-width:1350px;margin:auto;padding:18px}
+h2{margin:0 0 6px}
+p,.note{color:#a9c0cc;line-height:1.5}
+.layout{
+ display:grid;
+ grid-template-columns:minmax(0,1fr) 350px;
+ gap:14px
+}
+.panel{
+ background:#1b2a38;border:1px solid #365064;
+ border-radius:12px;padding:14px
+}
+canvas{
+ display:block;width:100%;height:auto;
+ background:#0b1d25;border-radius:8px;
+ touch-action:none
+}
+.control{margin:12px 0}
+.control label{
+ display:flex;justify-content:space-between;
+ gap:8px;margin-bottom:5px
+}
+.control input{width:100%;accent-color:#46dd7a}
+.control select{
+ width:100%;padding:9px;background:#10202b;
+ color:white;border:1px solid #476174;
+ border-radius:6px
+}
+.metrics{
+ display:grid;grid-template-columns:1fr 1fr;gap:8px
+}
+.metric{
+ background:#10202b;border-radius:8px;padding:10px
+}
+.metric b{
+ display:block;color:#85e9a9;font-size:19px;
+ font-variant-numeric:tabular-nums
+}
+.metric small{color:#b3c9d5}
+button{
+ background:#2b6075;color:white;border:0;
+ border-radius:7px;padding:9px 12px;
+ cursor:pointer;margin:7px 5px 7px 0
+}
+button:hover{background:#39809a}
+.note{font-size:12px}
+@media(max-width:850px){
+ .layout{grid-template-columns:1fr}
+}
+</style>
+</head>
+
+<body>
+<main>
+<h2>NV Diamond Optical Simulator — V04</h2>
+<p>
+Movable laser entrance · Variable corner-cut angle ·
+3D beam steering · NV absorption · Optical saturation ·
+PDAPC2 readout
+</p>
+
+<div class="layout">
+<section class="panel">
+<canvas id="view" width="850" height="680"></canvas>
+<p class="note">
+Drag the green handle to change the horizontal incident angle.
+The yellow point marks the laser entrance position.
+Green brightness decreases with absorption; orange indicates
+the spatial distribution of absorbed pump power.
+</p>
+
+<canvas id="side" width="850" height="160"></canvas>
+
+<button id="reset">Reset settings</button>
+<button id="png">Save diagram PNG</button>
+<button id="csv">Export angular sweep CSV</button>
+
+<p class="note">
+The visible beam uses a few thick representative paths.
+The numerical calculation uses a weighted ray bundle.
+The side view shows the central ray's height against
+cumulative optical path length.
+</p>
+</section>
+
+<section class="panel">
+<div id="controls"></div>
+
+<div class="metrics">
+<div class="metric">
+<small>Predicted PD voltage</small>
+<b id="vout">—</b>
+</div>
+<div class="metric">
+<small>Measured PD voltage</small>
+<b>1.60 V</b>
+</div>
+<div class="metric">
+<small>NV pump absorbed</small>
+<b id="fraction">—</b>
+</div>
+<div class="metric">
+<small>Green absorbed</small>
+<b id="absorbed">—</b>
+</div>
+<div class="metric">
+<small>Red power at PD</small>
+<b id="red">—</b>
+</div>
+<div class="metric">
+<small>Mean ray path</small>
+<b id="path">—</b>
+</div>
+<div class="metric">
+<small>Unsaturated absorption α</small>
+<b id="alpha">—</b>
+</div>
+<div class="metric">
+<small>Peak entrance intensity</small>
+<b id="intensity">—</b>
+</div>
+<div class="metric">
+<small>NV centers in diamond</small>
+<b id="nvcount">—</b>
+</div>
+<div class="metric">
+<small>Beam captured by entrance</small>
+<b id="capture">—</b>
+</div>
+<div class="metric">
+<small>Green pump escaped</small>
+<b id="escaped">—</b>
+</div>
+<div class="metric">
+<small>Other / remaining pump</small>
+<b id="remaining">—</b>
+</div>
+</div>
+
+<p class="note" id="info"></p>
+<p class="note">
+Model assumptions: diamond index 2.41;
+NV absorption cross-section 3.1×10⁻¹⁷ cm²;
+effective emission wavelength 700 nm;
+PD gain 1500 V/A; PD responsivity 0.4 A/W.
+Saturation intensity, red collection efficiency,
+photon yield and filter transmission are adjustable
+assumptions, not independently calibrated measurements.
+</p>
+</section>
+</div>
+</main>
+
+<script>
+'use strict';
+
+/* ==========================================
+   CONSTANTS
+========================================== */
+
+const $ = id => document.getElementById(id);
+
+const canvas = $('view');
+const ctx = canvas.getContext('2d');
+
+const side = $('side');
+const sc = side.getContext('2d');
+
+const MM = 1.45;
+const THICKNESS = 0.50;
+const FACET = 0.25;
+
+const RAD = Math.PI / 180;
+const N_DIAMOND = 2.41;
+
+const NV_SIGMA = 3.1e-17;
+const CARBON_DENSITY = 1.76e23;
+
+const PD_GAIN = 1500;
+const PD_RESP = 0.4;
+
+const MAX_BOUNCES = 100;
+const EPS = 1e-8;
+
+/* ==========================================
+   DEFAULT SETTINGS
+========================================== */
+
+const defaults = {
+ entrance:'corner',
+ position:50,
+ power:32,
+ concentration:300,
+ cutAngle:45,
+ azimuth:0,
+ elevation:0,
+ beam:100,
+ spread:3,
+ shown:3,
+ reflections:7,
+ coupling:90,
+ photonYield:70,
+ collection:28,
+ filter:85,
+ Isat:100,
+ saturation:1,
+ heatmap:1,
+ fading:1
+};
+
+const S = {...defaults};
+
+/* ==========================================
+   CONTROLS
+========================================== */
+
+const specs = [
+ ['power','532 nm laser power',' mW',0,200,1],
+ ['concentration','NV concentration',' ppb',0,4500,25],
+ ['cutAngle','Corner-cut angle','°',15,75,1],
+ ['position','Entrance position','%',0,100,1],
+ ['azimuth','Horizontal beam steering','°',-35,35,1],
+ ['elevation','Vertical beam steering','°',-35,35,1],
+ ['beam','Beam diameter (1/e²)',' µm',20,240,5],
+ ['spread','Angular half-spread','°',0,15,0.5],
+ ['shown','Visible beam paths','',1,5,1],
+ ['reflections','Displayed reflections','',1,15,1],
+ ['coupling','Pump coupling into diamond','%',10,100,5],
+ ['photonYield','Effective red photon yield','%',20,100,5],
+ ['collection','CPC red collection','%',5,70,1],
+ ['filter','FGL630 red transmission','%',50,100,1],
+ ['Isat','Effective saturation intensity',' kW/cm²',1,1000,1],
+ ['saturation','Enable saturation (0/1)','',0,1,1],
+ ['heatmap','Show absorption heatmap (0/1)','',0,1,1],
+ ['fading','Fade beam with absorption (0/1)','',0,1,1]
+];
+
+const controls = $('controls');
+
+const entranceBox = document.createElement('div');
+entranceBox.className = 'control';
+
+entranceBox.innerHTML = `
+<label><b>Laser entrance surface</b></label>
+<select id="entranceSurface">
+<option value="corner">Clipped corner</option>
+<option value="left">Left edge</option>
+<option value="right">Right edge</option>
+<option value="top">Top edge</option>
+<option value="bottom">Bottom edge</option>
+</select>
+`;
+
+controls.append(entranceBox);
+
+for(const [key,label,unit,min,max,step] of specs){
+ const div = document.createElement('div');
+ div.className = 'control';
+
+ div.innerHTML = `
+ <label>
+ <span>${label}</span>
+ <b id="val_${key}"></b>
+ </label>
+ <input type="range"
+ id="ctl_${key}"
+ min="${min}"
+ max="${max}"
+ step="${step}"
+ value="${S[key]}">
+ `;
+
+ controls.append(div);
+
+ $('ctl_'+key).addEventListener('input',e=>{
+  S[key] = Number(e.target.value);
+  draw();
+ });
+}
+
+$('entranceSurface').addEventListener('change',e=>{
+ S.entrance = e.target.value;
+ draw();
+});
+
+/* ==========================================
+   VECTOR OPERATIONS
+========================================== */
+
+function add(a,b,t=1){
+ return a.map((v,i)=>v+b[i]*t);
+}
+
+function sub(a,b){
+ return a.map((v,i)=>v-b[i]);
+}
+
+function dot(a,b){
+ return a.reduce((s,v,i)=>s+v*b[i],0);
+}
+
+function norm(a){
+ const m=Math.hypot(...a);
+ return a.map(v=>v/m);
+}
+
+function cross2(a,b){
+ return a[0]*b[1]-a[1]*b[0];
+}
+
+function clamp(v,min,max){
+ return Math.max(min,Math.min(max,v));
+}
+
+/* ==========================================
+   DIAMOND GEOMETRY
+
+   Polygon order:
+   0: corner -> bottom
+   1: bottom -> right
+   2: right -> top
+   3: top -> left
+   4: left -> corner
+
+   The coordinate system is a top view.
+========================================== */
+
+function geometry(){
+ const a=FACET*Math.cos(S.cutAngle*RAD);
+ const b=FACET*Math.sin(S.cutAngle*RAD);
+
+ const poly=[
+  [a,0],
+  [MM,0],
+  [MM,MM],
+  [0,MM],
+  [0,b]
+ ];
+
+ const indices={
+  bottom:0,
+  right:1,
+  top:2,
+  left:3,
+  corner:4
+ };
+
+ const index=indices[S.entrance];
+
+ const p0=poly[index];
+ const p1=poly[(index+1)%poly.length];
+
+ const edge=sub(p1,p0);
+ const length=Math.hypot(...edge);
+
+ const tangent=norm(edge);
+
+ // Polygon is counterclockwise:
+ // left-hand normal points into diamond.
+ const inward=[-tangent[1],tangent[0]];
+
+ const fraction=S.position/100;
+
+ const point=add(p0,edge,fraction);
+
+ return {
+  poly,a,b,index,p0,p1,
+  length,tangent,inward,point
+ };
+}
+
+/* ==========================================
+   OPTICAL PARAMETERS
+========================================== */
+
+function alpha0(){
+ // Convert cm^-1 to mm^-1.
+ return CARBON_DENSITY *
+  S.concentration * 1e-9 *
+  NV_SIGMA / 10;
+}
+
+function peakIntensity(powerMw,diameterMm){
+ // Gaussian peak intensity, kW/cm^2.
+ // Diameter is the 1/e^2 intensity diameter.
+ const radiusCm=Math.max(diameterMm/2,1e-6)/10;
+ const powerW=powerMw/1000;
+
+ return 2*powerW /
+  (Math.PI*radiusCm*radiusCm) / 1000;
+}
+
+/* ==========================================
+   FRESNEL REFLECTANCE
+
+   Unpolarized approximation.
+========================================== */
+
+function fresnel(cosi,n1,n2){
+ cosi=clamp(Math.abs(cosi),0,1);
+
+ const sini2=Math.max(0,1-cosi*cosi);
+ const sint2=(n1/n2)**2*sini2;
+
+ if(sint2>=1)return 1;
+
+ const cost=Math.sqrt(1-sint2);
+
+ const rs=(
+  (n1*cosi-n2*cost) /
+  (n1*cosi+n2*cost)
+ )**2;
+
+ const rp=(
+  (n1*cost-n2*cosi) /
+  (n1*cost+n2*cosi)
+ )**2;
+
+ return clamp((rs+rp)/2,0,1);
+}
+
+/* ==========================================
+   RAY TRACING
+
+   A ray begins at the selected entrance
+   point, then travels in 3D.
+
+   Horizontal angle is relative to the
+   inward normal of the chosen surface.
+========================================== */
+
+function ray(
+ offset,
+ azimuth,
+ elevation,
+ maxBounces,
+ record=true
+){
+ const g=geometry();
+
+ const origin=add(
+  g.point,
+  g.tangent,
+  offset
+ );
+
+ const er=elevation*RAD;
+ const ar=azimuth*RAD;
+
+ const horizontal=norm(
+  add(g.inward,g.tangent,Math.tan(ar))
+ );
+
+ let d=[
+  horizontal[0]*Math.cos(er),
+  horizontal[1]*Math.cos(er),
+  Math.sin(er)
+ ];
+
+ let p=[
+  origin[0]+d[0]*EPS,
+  origin[1]+d[1]*EPS,
+  THICKNESS/2+d[2]*EPS
+ ];
+
+ let remaining=1;
+ let absorbed=0;
+ let escaped=0;
+ let total=0;
+
+ const segments=[];
+
+ const alpha=alpha0();
+
+ const pump=S.power*S.coupling/100;
+
+ for(let bounce=0;bounce<maxBounces;bounce++){
+
+  if(remaining<1e-7)break;
+
+  let best=Infinity;
+  let hit=-1;
+  let normal=null;
+
+  // Intersections with vertical side facets.
+  for(let i=0;i<g.poly.length;i++){
+
+   const v=g.poly[i];
+   const w=g.poly[(i+1)%g.poly.length];
+
+   const edge=sub(w,v);
+
+   const den=cross2(
+    [d[0],d[1]],
+    edge
+   );
+
+   if(Math.abs(den)<1e-12)continue;
+
+   const ap=[
+    v[0]-p[0],
+    v[1]-p[1]
+   ];
+
+   const u=cross2(ap,edge)/den;
+   const t=cross2(ap,[d[0],d[1]])/den;
+
+   if(
+    u>EPS &&
+    u<best &&
+    t>=-1e-8 &&
+    t<=1+1e-8
+   ){
+    best=u;
+    hit=i;
+
+    normal=norm([
+     edge[1],
+     -edge[0],
+     0
+    ]);
+   }
+  }
+
+  // Intersections with large top/bottom faces.
+  if(Math.abs(d[2])>1e-12){
+
+   for(const z of [0,THICKNESS]){
+
+    const u=(z-p[2])/d[2];
+
+    if(u>EPS && u<best){
+
+     best=u;
+     hit=z===0?5:6;
+
+     normal=z===0?
+      [0,0,-1]:[0,0,1];
+    }
+   }
+  }
+
+  if(hit<0 || !Number.isFinite(best))break;
+
+  const end=add(p,d,best);
+  const before=remaining;
+
+  // Simplified saturable absorption.
+  // Beam area is treated as constant.
+  const localPower=pump*remaining;
+
+  const localI=peakIntensity(
+   localPower,
+   S.beam/1000
+  );
+
+  const effectiveAlpha=
+   S.saturation ?
+   alpha/(1+localI/S.Isat) :
+   alpha;
+
+  const take=remaining*
+   (1-Math.exp(-effectiveAlpha*best));
+
+  absorbed+=take;
+  remaining-=take;
+  total+=best;
+
+  const afterAbsorption=remaining;
+
+  // Diamond-air except:
+  // corner entrance is optically bonded;
+  // upper large face is CPC-bonded.
+  let nextIndex=1.0;
+
+  if(hit===4)nextIndex=1.50;
+  if(hit===6)nextIndex=1.50;
+
+  const cosi=Math.abs(dot(d,normal));
+
+  const R=fresnel(
+   cosi,
+   N_DIAMOND,
+   nextIndex
+  );
+
+  const escapedHere=remaining*(1-R);
+
+  escaped+=escapedHere;
+  remaining*=R;
+
+  if(record){
+   segments.push({
+    p:[...p],
+    q:[...end],
+    before,
+    afterAbsorption,
+    after:remaining,
+    take,
+    escaped:escapedHere,
+    length:best,
+    hit
+   });
+  }
+
+  // Specular reflection of remaining power.
+  d=add(
+   d,
+   normal,
+   -2*dot(d,normal)
+  );
+
+  p=add(end,d,EPS);
+ }
+
+ return {
+  segments,
+  absorbed,
+  escaped,
+  remaining,
+  total
+ };
+}
+
+/* ==========================================
+   BEAM BUNDLE EVALUATION
+========================================== */
+
+function evaluate(
+ azimuth=S.azimuth,
+ withPaths=true
+){
+ const g=geometry();
+
+ const samples=81;
+
+ let absorbed=0;
+ let escaped=0;
+ let remaining=0;
+ let totalPath=0;
+
+ let weightSum=0;
+ let capturedWeight=0;
+
+ const rayset=[];
+
+ const positionAlong=
+  g.length*S.position/100;
+
+ for(let i=0;i<samples;i++){
+
+  const u=2*(i+.5)/samples-1;
+
+  // Beam offsets across the entrance surface.
+  const offset=u*S.beam/2000;
+
+  const weight=Math.exp(-2*u*u);
+
+  weightSum+=weight;
+
+  const localPosition=
+   positionAlong+offset;
+
+  // Ray is outside the physical entrance.
+  if(
+   localPosition<0 ||
+   localPosition>g.length
+  ){
+   continue;
+  }
+
+  capturedWeight+=weight;
+
+  const tr=ray(
+   offset,
+   azimuth+u*S.spread*.65,
+   S.elevation,
+   MAX_BOUNCES,
+   withPaths
+  );
+
+  absorbed+=weight*tr.absorbed;
+  escaped+=weight*tr.escaped;
+  remaining+=weight*tr.remaining;
+  totalPath+=weight*tr.total;
+
+  if(withPaths && i%4===0){
+   rayset.push({tr,weight});
+  }
+ }
+
+ return {
+  fraction:absorbed/weightSum,
+  escaped:escaped/weightSum,
+  remaining:remaining/weightSum,
+  capture:capturedWeight/weightSum,
+  mean:capturedWeight?
+   totalPath/capturedWeight:0,
+  rayset
+ };
+}
+
+/* ==========================================
+   CANVAS GEOMETRY
+========================================== */
+
+function xy(p){
+ const scale=410/MM;
+
+ return [
+  180+p[0]*scale,
+  80+p[1]*scale
+ ];
+}
+
+function line(p,q){
+ const a=xy(p);
+ const b=xy(q);
+
+ ctx.beginPath();
+ ctx.moveTo(...a);
+ ctx.lineTo(...b);
+}
+
+/* ==========================================
+   DRAW BEAM WITH ABSORPTION FADING
+========================================== */
+
+function drawBeam(tr,width,opacity){
+
+ for(const s of tr.segments){
+
+  const power=S.fading ?
+   (s.before+s.afterAbsorption)/2 :
+   1;
+
+  if(power<.001)continue;
+
+  ctx.save();
+
+  ctx.globalAlpha=clamp(
+   opacity*Math.sqrt(power),
+   .002,1
+  );
+
+  ctx.lineCap='round';
+
+  ctx.shadowColor='#28ff65';
+  ctx.shadowBlur=12;
+
+  ctx.strokeStyle='#20ef55';
+  ctx.lineWidth=width+10;
+
+  line(s.p,s.q);
+  ctx.stroke();
+
+  ctx.shadowBlur=0;
+
+  ctx.strokeStyle='#43fc70';
+  ctx.lineWidth=width;
+
+  line(s.p,s.q);
+  ctx.stroke();
+
+  ctx.restore();
+ }
+}
+
+/* ==========================================
+   ABSORPTION HEATMAP
+========================================== */
+
+function drawHeat(tr,weight){
+
+ if(!S.heatmap)return;
+
+ for(const s of tr.segments){
+
+  if(s.take<=0)continue;
+
+  const steps=Math.max(
+   1,Math.ceil(s.length/.025)
+  );
+
+  for(let j=0;j<steps;j++){
+
+   const f=(j+.5)/steps;
+
+   const p=add(
+    s.p,
+    sub(s.q,s.p),
+    f
+   );
+
+   const c=xy(p);
+
+   const strength=clamp(
+    s.take/steps*weight*80,
+    0,.7
+   );
+
+   ctx.beginPath();
+
+   ctx.fillStyle=
+    `rgba(255,143,37,${strength})`;
+
+   ctx.arc(
+    c[0],c[1],
+    Math.max(
+     5,
+     S.beam/1000*410/MM*.6
+    ),
+    0,Math.PI*2
+   );
+
+   ctx.fill();
+  }
+ }
+}
+
+/* ==========================================
+   MAIN DRAWING
+========================================== */
+
+function draw(){
+
+ for(const [key,,unit] of specs){
+  $('val_'+key).textContent=S[key]+unit;
+ }
+
+ $('entranceSurface').value=S.entrance;
+
+ const g=geometry();
+
+ ctx.clearRect(
+  0,0,canvas.width,canvas.height
+ );
+
+ ctx.fillStyle='#0b1d25';
+ ctx.fillRect(0,0,850,680);
+
+ // Diamond outline.
+ ctx.beginPath();
+
+ g.poly.forEach((p,i)=>{
+  const v=xy(p);
+
+  if(i===0)ctx.moveTo(...v);
+  else ctx.lineTo(...v);
+ });
+
+ ctx.closePath();
+
+ ctx.fillStyle='#153d48';
+ ctx.fill();
+
+ ctx.strokeStyle='#8ac6ce';
+ ctx.lineWidth=2;
+ ctx.stroke();
+
+ // Highlight selected entrance surface.
+ const p0=xy(g.p0);
+ const p1=xy(g.p1);
+
+ ctx.beginPath();
+ ctx.moveTo(...p0);
+ ctx.lineTo(...p1);
+
+ ctx.strokeStyle='#f7c948';
+ ctx.lineWidth=5;
+ ctx.stroke();
+
+ // Evaluate weighted ray bundle.
+ const result=evaluate();
+
+ for(const v of result.rayset){
+  drawHeat(v.tr,v.weight);
+ }
+
+ // Display a few thick beam paths.
+ const count=S.shown;
+
+ const distanceToStart=
+  g.length*S.position/100;
+
+ const distanceToEnd=
+  g.length*(1-S.position/100);
+
+ for(let i=0;i<count;i++){
+
+  const u=count===1?
+   0:2*i/(count-1)-1;
+
+  const maxOffset=Math.min(
+   distanceToStart,
+   distanceToEnd
+  );
+
+  const offset=u*Math.min(
+   S.beam/2000,
+   maxOffset*.98
+  );
+
+  const tr=ray(
+   offset,
+   S.azimuth+u*S.spread*.55,
+   S.elevation,
+   S.reflections+1,
+   true
+  );
+
+  drawBeam(
+   tr,
+   Math.max(
+    3,
+    S.beam/1000*410/MM*.38
+   ),
+   count===1?.95:.62
+  );
+ }
+
+ // Entrance point.
+ const point=xy(g.point);
+
+ ctx.beginPath();
+ ctx.arc(...point,7,0,Math.PI*2);
+ ctx.fillStyle='#ffd65a';
+ ctx.fill();
+
+ // Direction handle.
+ const direction=norm(
+  add(
+   g.inward,
+   g.tangent,
+   Math.tan(S.azimuth*RAD)
+  )
+ );
+
+ const handle=xy(
+  add(g.point,direction,-.30)
+ );
+
+ ctx.beginPath();
+ ctx.moveTo(...point);
+ ctx.lineTo(...handle);
+
+ ctx.strokeStyle='#a3ffae';
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ ctx.beginPath();
+ ctx.arc(...handle,9,0,Math.PI*2);
+ ctx.fillStyle='#c2ffd0';
+ ctx.fill();
+
+ ctx.fillStyle='#e0eff3';
+ ctx.font='15px system-ui';
+
+ ctx.fillText(
+  'Drag direction',
+  Math.max(8,handle[0]-70),
+  Math.max(18,handle[1]-16)
+ );
+
+ ctx.fillText(
+  `Entrance: ${S.entrance}`,
+  20,28
+ );
+
+ ctx.fillText(
+  `Corner cut: ${S.cutAngle}° / 250 µm`,
+  20,52
+ );
+
+ ctx.fillText(
+  'Diamond 1.45 × 1.45 mm',
+  350,645
+ );
+
+ // Side view.
+ drawSide();
+
+ // Photodiode photon budget.
+ const pump=S.power*S.coupling/100;
+
+ const absPower=pump*result.fraction;
+
+ const redPower=
+  absPower*
+  (532/700)*
+  (S.photonYield/100)*
+  (S.collection/100)*
+  (S.filter/100);
+
+ const voltage=
+  redPower/1000*
+  PD_RESP*PD_GAIN;
+
+ $('vout').textContent=
+  voltage.toFixed(3)+' V';
+
+ $('fraction').textContent=
+  (result.fraction*100).toFixed(1)+'%';
+
+ $('absorbed').textContent=
+  absPower.toFixed(2)+' mW';
+
+ $('red').textContent=
+  (redPower*1000).toFixed(0)+' µW';
+
+ $('path').textContent=
+  result.mean.toFixed(2)+' mm';
+
+ $('alpha').textContent=
+  (alpha0()*10).toFixed(2)+' cm⁻¹';
+
+ $('intensity').textContent=
+  peakIntensity(
+   pump,S.beam/1000
+  ).toFixed(2)+' kW/cm²';
+
+ $('capture').textContent=
+  (result.capture*100).toFixed(1)+'%';
+
+ $('escaped').textContent=
+  (pump*result.escaped).toFixed(2)+' mW';
+
+ $('remaining').textContent=
+  (pump*result.remaining).toFixed(2)+' mW';
+
+ const volume=
+  (MM*MM-g.a*g.b/2)*
+  THICKNESS/1000;
+
+ const nvCount=
+  CARBON_DENSITY*
+  S.concentration*1e-9*
+  volume;
+
+ $('nvcount').textContent=
+  nvCount.toExponential(2);
+
+ $('info').textContent=
+  `Model − measured: ${(voltage-1.6).toFixed(3)} V. `+
+  `Selected entrance: ${S.entrance}, `+
+  `position ${S.position}%. `+
+  `The incidence angle is specified inside the diamond `+
+  `relative to the selected surface normal. `+
+  `This model uses approximate saturation and `+
+  `constant beam diameter along each ray.`;
+}
+
+/* ==========================================
+   SIDE VIEW
+========================================== */
+
+function drawSide(){
+
+ sc.clearRect(0,0,850,160);
+
+ sc.fillStyle='#0b1d25';
+ sc.fillRect(0,0,850,160);
+
+ sc.fillStyle='#153d48';
+ sc.fillRect(65,16,720,115);
+
+ sc.strokeStyle='#8ac6ce';
+ sc.strokeRect(65,16,720,115);
+
+ sc.fillStyle='#e0eff3';
+ sc.font='13px system-ui';
+
+ sc.fillText(
+  '500 µm thickness · central ray (unwrapped path)',
+  70,150
+ );
+
+ const tr=ray(
+  0,
+  S.azimuth,
+  S.elevation,
+  S.reflections+1,
+  true
+ );
+
+ let dist=0;
+
+ for(const s of tr.segments){
+
+  const x1=65+Math.min(720,dist*85);
+
+  const x2=65+Math.min(
+   720,(dist+s.length)*85
+  );
+
+  sc.beginPath();
+
+  sc.moveTo(
+   x1,
+   131-s.p[2]*230
+  );
+
+  sc.lineTo(
+   x2,
+   131-s.q[2]*230
+  );
+
+  const brightness=S.fading ?
+   clamp(
+    (s.before+s.afterAbsorption)/2,
+    .03,1
+   ):.9;
+
+  sc.strokeStyle=
+   `rgba(62,248,105,${brightness})`;
+
+  sc.lineWidth=5;
+  sc.stroke();
+
+  dist+=s.length;
+ }
+}
+
+/* ==========================================
+   MOUSE INTERACTION
+
+   Drag green handle:
+   adjust horizontal steering.
+
+   Drag yellow entrance point:
+   adjust position along selected surface.
+========================================== */
+
+let dragMode=null;
+
+canvas.addEventListener('pointerdown',e=>{
+
+ const rect=canvas.getBoundingClientRect();
+
+ const x=(e.clientX-rect.left)*
+  canvas.width/rect.width;
+
+ const y=(e.clientY-rect.top)*
+  canvas.height/rect.height;
+
+ const g=geometry();
+ const p=xy(g.point);
+
+ const distance=Math.hypot(
+  x-p[0],y-p[1]
+ );
+
+ dragMode=distance<18?
+  'position':'direction';
+
+ canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointerup',()=>{
+ dragMode=null;
+});
+
+canvas.addEventListener('pointercancel',()=>{
+ dragMode=null;
+});
+
+canvas.addEventListener('pointermove',e=>{
+
+ if(!dragMode)return;
+
+ const rect=canvas.getBoundingClientRect();
+
+ const x=(e.clientX-rect.left)*
+  canvas.width/rect.width;
+
+ const y=(e.clientY-rect.top)*
+  canvas.height/rect.height;
+
+ const g=geometry();
+
+ if(dragMode==='position'){
+
+  const scale=410/MM;
+
+  const point=[
+   (x-180)/scale,
+   (y-80)/scale
+  ];
+
+  const relative=sub(point,g.p0);
+
+  const distance=dot(
+   relative,g.tangent
+  );
+
+  S.position=clamp(
+   Math.round(
+    100*distance/g.length
+   ),
+   0,100
+  );
+
+  $('ctl_position').value=S.position;
+
+ }else{
+
+  const p=xy(g.point);
+
+  const direction=[
+   p[0]-x,
+   p[1]-y
+  ];
+
+  const world=norm(direction);
+
+  const forward=dot(
+   world,g.inward
+  );
+
+  const sideways=dot(
+   world,g.tangent
+  );
+
+  const angle=Math.atan2(
+   sideways,forward
+  )/RAD;
+
+  S.azimuth=clamp(
+   Math.round(angle),
+   -35,35
+  );
+
+  $('ctl_azimuth').value=S.azimuth;
+ }
+
+ draw();
+});
+
+/* ==========================================
+   RESET
+========================================== */
+
+$('reset').onclick=()=>{
+
+ Object.assign(S,defaults);
+
+ for(const [key] of specs){
+  $('ctl_'+key).value=S[key];
+ }
+
+ $('entranceSurface').value=S.entrance;
+
+ draw();
+};
+
+/* ==========================================
+   EXPORT PNG
+========================================== */
+
+$('png').onclick=()=>{
+
+ const a=document.createElement('a');
+
+ a.href=canvas.toDataURL('image/png');
+ a.download='NV_GUI_V04.png';
+
+ a.click();
+};
+
+/* ==========================================
+   EXPORT CSV
+========================================== */
+
+$('csv').onclick=()=>{
+
+ const rows=[
+  'azimuth_deg,entrance,position_pct,cut_deg,'+
+  'elevation_deg,nv_ppb,power_mW,'+
+  'absorbed_fraction,escaped_fraction,'+
+  'mean_path_mm,predicted_PD_V'
+ ];
+
+ for(let angle=-35;angle<=35;angle++){
+
+  const e=evaluate(angle,false);
+
+  const pump=S.power*S.coupling/100;
+
+  const red=
+   pump*e.fraction*
+   532/700*
+   S.photonYield/100*
+   S.collection/100*
+   S.filter/100;
+
+  const voltage=
+   red/1000*PD_RESP*PD_GAIN;
+
+  rows.push([
+   angle,
+   S.entrance,
+   S.position,
+   S.cutAngle,
+   S.elevation,
+   S.concentration,
+   S.power,
+   e.fraction.toFixed(6),
+   e.escaped.toFixed(6),
+   e.mean.toFixed(4),
+   voltage.toFixed(5)
+  ].join(','));
+ }
+
+ const blob=new Blob(
+  [rows.join('\n')],
+  {type:'text/csv'}
+ );
+
+ const url=URL.createObjectURL(blob);
+
+ const a=document.createElement('a');
+
+ a.href=url;
+ a.download='NV_GUI_V04_sweep.csv';
+
+ a.click();
+
+ setTimeout(()=>{
+  URL.revokeObjectURL(url);
+ },1000);
+};
+
+/* ==========================================
+   INITIAL DRAW
+========================================== */
+
+draw();
+
+</script>
+</body>
+</html>
